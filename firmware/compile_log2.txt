@@ -1,0 +1,9 @@
+Sketch uses 851087 bytes (64%) of program storage space. Maximum is 1310720 bytes.
+Global variables use 42828 bytes (13%) of dynamic memory, leaving 284852 bytes for local variables. Maximum is 327680 bytes.
+
+[92mUsed library[0m [92mVersion[0m [90mPath[0m
+[93mWiFi[0m         3.3.5   [90mC:\Users\WontML\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.5\libraries\WiFi[0m
+[93mNetworking[0m   3.3.5   [90mC:\Users\WontML\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.5\libraries\Network[0m
+
+[92mUsed platform[0m [92mVersion[0m [90mPath[0m
+[93mesp32:esp32[0m   3.3.5   [90mC:\Users\WontML\AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.3.5[0m
