@@ -1,0 +1,10 @@
+Copy-Item : Could not find a part of the path 'C:\Users\WontML\dev\embedded_esp\esp32-S3-WontWiFi-analyzer\f
+irmware\esp32s3_wifi_scanner\build\esp32.esp32.esp32s3\partitions.csv'.
+At line:1 char:85
++ ...  -join '.'; Copy-Item -ErrorAction SilentlyContinue 'C:\Users\WontML\ ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:) [Copy-Item], DirectoryNotFoundException
+    + FullyQualifiedErrorId : System.IO.DirectoryNotFoundException,Microsoft.PowerShell.Commands.CopyItemCo 
+   mmand
+ 
+Error during build: exit status 1

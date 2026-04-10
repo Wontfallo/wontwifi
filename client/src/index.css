@@ -1,0 +1,300 @@
+/**
+ * index.css — ESP32-S3 Wi-Fi Analyzer
+ * Design: Scientific Instrument / RF Lab Dashboard
+ *
+ * Color Philosophy:
+ *   - Background: deep charcoal (#0f1623) — oscilloscope screen
+ *   - Surface: dark slate (#1a2235) — instrument panel
+ *   - Primary accent: phosphor green (#4ade80) — 2.4 GHz signals
+ *   - Secondary accent: electric blue (#38bdf8) — 5 GHz signals
+ *   - Warning: amber (#fbbf24) — busy channels
+ *   - Danger: red (#f87171) — congested/interference
+ *   - Grid lines: subtle blue-gray (#1e3a5f) — oscilloscope graticule
+ *
+ * Typography:
+ *   - Headings: Space Grotesk (technical, geometric)
+ *   - Data/values: IBM Plex Mono (monospace precision)
+ *   - Body: Inter (readable)
+ */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Custom RF Lab tokens */
+  --color-phosphor: #4ade80;
+  --color-electric: #38bdf8;
+  --color-amber-warn: #fbbf24;
+  --color-danger: #f87171;
+  --color-grid: rgba(56, 189, 248, 0.08);
+  --color-panel: #1a2235;
+  --color-panel-border: rgba(56, 189, 248, 0.15);
+}
+
+:root {
+  --radius: 0.375rem;
+  --background: oklch(0.12 0.02 240);
+  --foreground: oklch(0.92 0.01 220);
+  --card: oklch(0.16 0.025 240);
+  --card-foreground: oklch(0.92 0.01 220);
+  --popover: oklch(0.16 0.025 240);
+  --popover-foreground: oklch(0.92 0.01 220);
+  --primary: oklch(0.75 0.18 145);       /* phosphor green */
+  --primary-foreground: oklch(0.1 0.02 145);
+  --secondary: oklch(0.22 0.03 240);
+  --secondary-foreground: oklch(0.85 0.01 220);
+  --muted: oklch(0.2 0.025 240);
+  --muted-foreground: oklch(0.55 0.02 230);
+  --accent: oklch(0.65 0.18 200);        /* electric blue */
+  --accent-foreground: oklch(0.1 0.02 200);
+  --destructive: oklch(0.65 0.22 25);    /* red */
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.28 0.04 240);
+  --input: oklch(0.22 0.03 240);
+  --ring: oklch(0.75 0.18 145);
+  --chart-1: oklch(0.75 0.18 145);       /* phosphor green */
+  --chart-2: oklch(0.65 0.18 200);       /* electric blue */
+  --chart-3: oklch(0.78 0.16 85);        /* amber */
+  --chart-4: oklch(0.65 0.22 25);        /* red */
+  --chart-5: oklch(0.7 0.15 300);        /* purple */
+  --sidebar: oklch(0.14 0.025 240);
+  --sidebar-foreground: oklch(0.92 0.01 220);
+  --sidebar-primary: oklch(0.75 0.18 145);
+  --sidebar-primary-foreground: oklch(0.1 0.02 145);
+  --sidebar-accent: oklch(0.2 0.03 240);
+  --sidebar-accent-foreground: oklch(0.92 0.01 220);
+  --sidebar-border: oklch(0.22 0.04 240);
+  --sidebar-ring: oklch(0.75 0.18 145);
+}
+
+/* Force dark theme always */
+.dark {
+  --background: oklch(0.12 0.02 240);
+  --foreground: oklch(0.92 0.01 220);
+  --card: oklch(0.16 0.025 240);
+  --card-foreground: oklch(0.92 0.01 220);
+  --popover: oklch(0.16 0.025 240);
+  --popover-foreground: oklch(0.92 0.01 220);
+  --primary: oklch(0.75 0.18 145);
+  --primary-foreground: oklch(0.1 0.02 145);
+  --secondary: oklch(0.22 0.03 240);
+  --secondary-foreground: oklch(0.85 0.01 220);
+  --muted: oklch(0.2 0.025 240);
+  --muted-foreground: oklch(0.55 0.02 230);
+  --accent: oklch(0.65 0.18 200);
+  --accent-foreground: oklch(0.1 0.02 200);
+  --destructive: oklch(0.65 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(0.28 0.04 240);
+  --input: oklch(0.22 0.03 240);
+  --ring: oklch(0.75 0.18 145);
+  --chart-1: oklch(0.75 0.18 145);
+  --chart-2: oklch(0.65 0.18 200);
+  --chart-3: oklch(0.78 0.16 85);
+  --chart-4: oklch(0.65 0.22 25);
+  --chart-5: oklch(0.7 0.15 300);
+  --sidebar: oklch(0.14 0.025 240);
+  --sidebar-foreground: oklch(0.92 0.01 220);
+  --sidebar-primary: oklch(0.75 0.18 145);
+  --sidebar-primary-foreground: oklch(0.1 0.02 145);
+  --sidebar-accent: oklch(0.2 0.03 240);
+  --sidebar-accent-foreground: oklch(0.92 0.01 220);
+  --sidebar-border: oklch(0.22 0.04 240);
+  --sidebar-ring: oklch(0.75 0.18 145);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    @apply cursor-pointer;
+  }
+
+  /* Monospace data values */
+  .font-mono {
+    font-family: 'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  /* Headings use Space Grotesk */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  .container {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .flex {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  @media (min-width: 640px) {
+    .container {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container {
+      padding-left: 2rem;
+      padding-right: 2rem;
+      max-width: 1400px;
+    }
+  }
+
+  /* RF Lab panel style */
+  .rf-panel {
+    background: var(--color-panel, #1a2235);
+    border: 1px solid var(--color-panel-border, rgba(56,189,248,0.15));
+    border-radius: var(--radius-md);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .rf-panel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(56,189,248,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56,189,248,0.04) 1px, transparent 1px);
+    background-size: 24px 24px;
+    pointer-events: none;
+  }
+
+  /* Phosphor glow text */
+  .phosphor-text {
+    color: #4ade80;
+    text-shadow: 0 0 8px rgba(74,222,128,0.6), 0 0 20px rgba(74,222,128,0.3);
+  }
+
+  .electric-text {
+    color: #38bdf8;
+    text-shadow: 0 0 8px rgba(56,189,248,0.6), 0 0 20px rgba(56,189,248,0.3);
+  }
+
+  /* Glow border */
+  .glow-border-green {
+    border-color: rgba(74,222,128,0.4) !important;
+    box-shadow: 0 0 12px rgba(74,222,128,0.15), inset 0 0 12px rgba(74,222,128,0.05);
+  }
+
+  .glow-border-blue {
+    border-color: rgba(56,189,248,0.4) !important;
+    box-shadow: 0 0 12px rgba(56,189,248,0.15), inset 0 0 12px rgba(56,189,248,0.05);
+  }
+
+  /* Signal strength bar */
+  .signal-bar {
+    transition: height 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  /* Scanning pulse animation */
+  @keyframes scan-sweep {
+    0%   { transform: translateX(-100%); opacity: 0; }
+    10%  { opacity: 0.6; }
+    90%  { opacity: 0.6; }
+    100% { transform: translateX(100%); opacity: 0; }
+  }
+
+  .scan-sweep {
+    animation: scan-sweep 2s ease-in-out infinite;
+  }
+
+  @keyframes phosphor-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.6; }
+  }
+
+  .phosphor-pulse {
+    animation: phosphor-pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes blink-cursor {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+  }
+
+  .blink-cursor::after {
+    content: '▮';
+    animation: blink-cursor 1s step-end infinite;
+    color: #4ade80;
+    margin-left: 2px;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(56,189,248,0.05);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(56,189,248,0.25);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(56,189,248,0.4);
+  }
+}
