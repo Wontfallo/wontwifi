@@ -18,21 +18,9 @@ export interface UseFirmwareFlasherReturn {
   selectedFile: File | null;
   handleFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
   flashSelectedFile: () => void;
+  flashFromUrl: (url: string, filename: string, offset?: number) => void;
   reset: () => void;
 }
-
-/**
- * Default firmware binary (pre-compiled for ESP32-S3)
- * In production, this would be fetched from a server or CDN.
- * For now, we'll provide instructions for users to supply their own .bin file.
- */
-const DEFAULT_PARTITION_TABLE = {
-  offset: 0x8000,
-  data: new Uint8Array([
-    // Minimal partition table for ESP32-S3
-    // This is a placeholder — users will upload their own firmware
-  ]),
-};
 
 export function useFirmwareFlasher(): UseFirmwareFlasherReturn {
   const [status, setStatus] = useState<FlashStatus>("idle");
@@ -51,9 +39,7 @@ export function useFirmwareFlasher(): UseFirmwareFlasherReturn {
     }
   }, []);
 
-  const flashSelectedFile = useCallback(async () => {
-    if (!selectedFile) return;
-
+  const flash = useCallback(async (getBinary: () => Promise<string>, filename: string, offset: number) => {
     setStatus("connecting");
     setMessage("Waiting for device selection...");
     setProgress(0);
@@ -62,89 +48,83 @@ export function useFirmwareFlasher(): UseFirmwareFlasherReturn {
     let transport: Transport | null = null;
 
     try {
-      // Request serial port (Directly tied to User Gesture onClick)
       const port = await navigator.serial.requestPort();
-
       setMessage("Connecting to ESP32-S3...");
       setProgress(10);
 
-      // Create transport and loader
       transport = new Transport(port);
-      const espLoader = new ESPLoader({
-        transport,
-        baudrate: 115200,
-        romBaudrate: 115200,
-      });
+      const espLoader = new ESPLoader({ transport, baudrate: 115200, romBaudrate: 115200 });
 
-      // Connect
       setMessage("Connecting to bootloader...");
       await espLoader.connect();
       setProgress(20);
 
-      // Read firmware binary as a Binary String (Required by esptool-js 0.5.x)
       setMessage("Processing firmware binary...");
-      const binString = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target?.result as string);
-        reader.onerror = (e) => reject(e);
-        reader.readAsBinaryString(selectedFile);
-      });
+      const binString = await getBinary();
+      setProgress(35);
 
-      setMessage("Erasing flash (This might take a moment)...");
-      setProgress(30);
+      setMessage("Erasing flash (this may take a moment)...");
+      setProgress(40);
 
-      // Flash firmware at offset 0x10000 (standard ESP32-S3 app partition, NOT 0x1000)
-      const fileArray = [
-        {
-          data: binString, // bStr.charCodeAt happens inside here in older esptool
-          address: 0x10000, 
-        },
-      ];
-
-      setProgress(50);
-
-      // Write flash array payload
       await espLoader.writeFlash({
-        fileArray: fileArray as any,
+        fileArray: [{ data: binString, address: offset }] as any,
         flashSize: "keep",
         flashMode: "keep",
         flashFreq: "keep",
-        eraseAll: false, // block erase instead of full chip wipe
+        eraseAll: false,
         compress: true,
-        reportProgress: (fileIndex: number, written: number, total: number) => {
-          // Map 50 -> 95 for the write phase
-          const pct = Math.round((written / total) * 100);
-          setProgress(50 + (pct * 0.45));
-        }
+        reportProgress: (_fileIndex: number, written: number, total: number) => {
+          setProgress(40 + Math.round((written / total) * 55));
+        },
       } as any);
 
-      setProgress(95);
+      setProgress(96);
       setMessage("Resetting device...");
-
-      // Reset the device
       await espLoader.softReset(false);
       setProgress(100);
-
       setStatus("success");
-      setMessage("✓ Flashed! Device has rebooted. Click 'Back to Dashboard' to connect.");
-
-      // Close port properly via transport
-      if (transport) {
-        await transport.disconnect();
-      }
+      setMessage(`✓ ${filename} flashed! Device is rebooting.`);
+      if (transport) await transport.disconnect();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
       setStatus("error");
       setMessage(`Flashing failed: ${msg}`);
       setProgress(0);
-      
-      // Cleanup on error
-      if (transport) {
-        try { await transport.disconnect(); } catch (e) {}
-      }
+      if (transport) { try { await transport.disconnect(); } catch (_) {} }
     }
-  }, [selectedFile]);
+  }, []);
+
+  const flashSelectedFile = useCallback(async () => {
+    if (!selectedFile) return;
+    await flash(
+      () => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onerror = (e) => reject(e);
+        reader.readAsBinaryString(selectedFile);
+      }),
+      selectedFile.name,
+      0x10000
+    );
+  }, [selectedFile, flash]);
+
+  const flashFromUrl = useCallback(async (url: string, filename: string, offset = 0x10000) => {
+    await flash(
+      async () => {
+        setMessage(`Downloading ${filename}...`);
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Download failed: ${response.statusText}`);
+        const buffer = await response.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        return binary;
+      },
+      filename,
+      offset
+    );
+  }, [flash]);
 
   const reset = useCallback(() => {
     setStatus("idle");
@@ -161,6 +141,7 @@ export function useFirmwareFlasher(): UseFirmwareFlasherReturn {
     selectedFile,
     handleFileSelect,
     flashSelectedFile,
+    flashFromUrl,
     reset,
   };
 }
